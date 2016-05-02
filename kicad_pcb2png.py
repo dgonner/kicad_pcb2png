@@ -27,6 +27,18 @@ class Segment:
 			self.params[key] = rest
 		return None	
 
+class Via:
+	def __init__(self, param_list):	
+		self.params = dict()
+		del param_list[0] # remove the 'via' element
+		# transform the params into keys of the object
+		for e in param_list:
+			key = e[0]
+			rest = e[1:]
+			if len(rest) == 1:
+				rest = rest[0]
+			self.params[key] = rest
+		return None	
 
 class Module:
 	def __init__(self, param_list):
@@ -69,7 +81,7 @@ class Pad:
 			rest = e[1:]
 			if len(rest) == 1:
 				rest = rest[0]
-			if key == 'at' or key == 'size' or key == 'drill': # only store at, size and drill
+			if key == 'at' or key == 'size' or key == 'drill' or key == 'layers': # only store at, size and drill
 				self.params[key] = rest
 
 		self.params['pad_type'] = pad_type
@@ -82,6 +94,8 @@ class Zone:
 	def __init__(self, param_list):	
 		self.params = dict()
 		del param_list[0] # remove the 'zone' element
+		layer = list(filter(lambda f: f[0] == 'layer', param_list))
+
 		param_list = list(filter(lambda f: f[0] == 'filled_polygon', param_list)) # filter everythin out except 'filled_polygon'
 		polygons = list()
 		for p in param_list:
@@ -90,6 +104,7 @@ class Zone:
 			polygons.append(poly)
 
 		self.params['polygons'] = polygons
+		self.params['layer'] = layer[0][1]
 		return None
 
 class Outline:
@@ -120,7 +135,7 @@ def mm2pix(mm, ppi):
 	return int(round(mm/25.4*ppi))
 
 
-def create_image(filename, dimensions, offset, ppi, border_mm, segments, modules, zones, inverted=False):
+def create_image(filename, dimensions, offset, ppi, border_mm, segments, modules, zones, vias, inverted=False, flipped=True, layer='B.Cu'):
 	print('Generating image...', end="", flush=True)
 
 	border = mm2pix(border_mm, ppi)       
@@ -146,7 +161,8 @@ def create_image(filename, dimensions, offset, ppi, border_mm, segments, modules
 		y2 = mm2pix(s.params['end'][1], ppi) - off_y
 		width = mm2pix(s.params['width'], ppi)
 
-		if s.params['layer'] == 'B.Cu':	
+#		if s.params['layer'] == 'B.Cu':	
+		if s.params['layer'] == layer:	
 			draw.line( [x1, y1, x2, y2], fill, width)
 			# draw circle on the start of the connection
 			x = x1 - int(round(width / 2))
@@ -159,21 +175,24 @@ def create_image(filename, dimensions, offset, ppi, border_mm, segments, modules
 
 	for m in modules:
 		for p in m.params['pads']:
-			center_x = mm2pix( p.params['at'][0] + p.params['offset'][0], ppi) - off_x
-			center_y = mm2pix(p.params['at'][1] + p.params['offset'][1], ppi) - off_y
-			
-			try:
-				rotation = p.params['at'][2]
-			except:
-				rotation = 0	
-			
+			# check if it's on the right layer
+			if "*.Cu" in p.params['layers'] or layer in p.params['layers']:
+				try:
+					rotation = 360 - p.params['at'][2]
+				except:
+					rotation = 0	
+				angle = math.radians(rotation)	
+				rot_x = p.params['at'][0] * math.cos(angle) - p.params['at'][1] * math.sin(angle)
+				rot_y = p.params['at'][0] * math.sin(angle) + p.params['at'][1] * math.cos(angle)
 
-			width_x = mm2pix(p.params['size'][0], ppi)
-			width_y = mm2pix(p.params['size'][1], ppi)
-			shape = p.params['shape']
+				center_x = mm2pix( rot_x + p.params['offset'][0], ppi) - off_x
+				center_y = mm2pix( rot_y + p.params['offset'][1], ppi) - off_y
+	
+				width_x = mm2pix(p.params['size'][0], ppi)
+				width_y = mm2pix(p.params['size'][1], ppi)
+				shape = p.params['shape']
 
-			if shape == 'oval' or shape == 'circle':
-				if rotation == 0 or rotation == 180:	
+				if shape == 'oval' or shape == 'circle':
 					x = center_x - int(round(width_x / 2.0))
 					y = center_y - int(round(width_y / 2.0))
 					draw.ellipse( [ x, y, x+width_x, y+width_y], fill)
@@ -192,9 +211,29 @@ def create_image(filename, dimensions, offset, ppi, border_mm, segments, modules
 	# 		draw.rectangle( [x, y, x+p.width, y+p.height], fill)
 
 	for z in zones:
-		for p in z.params['polygons']:
-			poly = list(map(lambda f: tuple(( mm2pix(f[0], ppi) - off_x, mm2pix(f[1], ppi) - off_y )), p ))
-			draw.polygon( poly, white, None)
+		if z.params['layer'] == layer:
+			for p in z.params['polygons']:
+				poly = list(map(lambda f: tuple(( mm2pix(f[0], ppi) - off_x, mm2pix(f[1], ppi) - off_y )), p ))
+				draw.polygon( poly, white, None)
+
+	for v in vias:
+		if layer in v.params['layers']:
+			center_x = mm2pix( v.params['at'][0], ppi) - off_x
+			center_y = mm2pix( v.params['at'][1], ppi) - off_y	
+
+			width = mm2pix( v.params['size'], ppi) # vias are always round?
+
+			x = center_x - int(round(width / 2.0))
+			y = center_y - int(round(width / 2.0))
+			draw.ellipse( [ x, y, x+width, y+width], fill)
+
+			# check for drill hole in pad
+			if 'drill' in v.params:
+				drill = mm2pix(v.params['drill'], ppi)
+				# draw circle for drill hole
+				x = center_x - int(round(drill / 2.0))
+				y = center_y - int(round(drill / 2.0))
+				draw.ellipse( [ x, y, x + drill, y + drill], black)
 
 	del draw
 
@@ -244,6 +283,7 @@ def parse_pcblist(pcblist):
 	# map keys in the kicad_pcb file to objects that can parse the data
 	supported_list = dict()
 	supported_list['segment'] = Segment
+	supported_list['via'] = Via
 	supported_list['module'] = Module
 	supported_list['zone'] = Zone
 	supported_list['gr_line'] = Outline
@@ -282,12 +322,14 @@ def get_outline_boundingbox(outlines):
 #==============================================================================
 
 SEGMENTS = list()
+VIAS = list()
 MODULES = list()
 ZONES = list()
 OUTLINES = list()
 
 pcb_data = dict()
 pcb_data['segment'] = SEGMENTS
+pcb_data['via'] = VIAS
 pcb_data['module'] = MODULES
 pcb_data['zone'] = ZONES
 pcb_data['gr_line'] = OUTLINES
@@ -331,6 +373,7 @@ print(' OK\n')
 OUTLINES = list(filter(lambda f: f.params['layer'] == 'Edge.Cuts', OUTLINES))
 
 print('segments:',len(SEGMENTS))
+print('vias:',len(VIAS))
 print('modules:',len(MODULES))
 
 pad_count = 0
@@ -359,5 +402,5 @@ except:
 	print("ERR: No board outlines found!")
 	exit()
 
-create_image(project_name+"_MILL-TRACES.png", dimensions, offset, PPI, BORDER_MM, SEGMENTS, MODULES, ZONES)
+create_image(project_name+"-B.Cu_MILL-TRACES.png", dimensions, offset, PPI, BORDER_MM, SEGMENTS, MODULES, ZONES, VIAS)
 print("Done\n")
