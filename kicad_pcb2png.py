@@ -8,7 +8,7 @@ from pyparsing import *
 import pprint
 
 # some global config parameters
-BORDER_MM = 0.6
+BORDER_MM = 0.5
 PPI = 2000
 
 
@@ -146,6 +146,7 @@ def create_image(filename, dimensions, offset, ppi, border_mm, segments, modules
 	black = 0x000000
 	white = 0xFFFFFF
 	fill = white
+	red = 0x0000FF
 
 	if inverted:
 		draw.rectangle( [0, 0, w, h], white)
@@ -154,6 +155,12 @@ def create_image(filename, dimensions, offset, ppi, border_mm, segments, modules
 	off_x = offset[0] - border
 	off_y = offset[1] - border
 
+	for z in zones:
+		if z.params['layer'] == layer:
+			for p in z.params['polygons']:
+				poly = list(map(lambda f: tuple(( mm2pix(f[0], ppi) - off_x, h - (mm2pix(f[1], ppi) - off_y ))), p ))
+				draw.polygon( poly, white, None)
+
 	for s in segments:
 		x1 = mm2pix(s.params['start'][0], ppi) - off_x
 		y1 = mm2pix(s.params['start'][1], ppi) - off_y
@@ -161,17 +168,16 @@ def create_image(filename, dimensions, offset, ppi, border_mm, segments, modules
 		y2 = mm2pix(s.params['end'][1], ppi) - off_y
 		width = mm2pix(s.params['width'], ppi)
 
-#		if s.params['layer'] == 'B.Cu':	
 		if s.params['layer'] == layer:	
-			draw.line( [x1, y1, x2, y2], fill, width)
+			draw.line( [x1, h-y1, x2, h-y2], fill, width)
 			# draw circle on the start of the connection
 			x = x1 - int(round(width / 2))
-			y = y1 - int(round(width / 2))
-			draw.ellipse( [ x+1, y+1, x + width, y + width], fill)
+			y = h - (y1 + int(round(width / 2)))
+			draw.ellipse( [ x+1, y-1, x + width, y + width], fill)
 			# draw circle on the end of the connection
 			x = x2 - int(round(width / 2))
-			y = y2 - int(round(width / 2))
-			draw.ellipse( [ x+1, y+1, x + width, y + width], fill)
+			y = h - (y2 + int(round(width / 2)))
+			draw.ellipse( [ x+1, y-1, x + width, y + width], fill)
 
 	for m in modules:
 		for p in m.params['pads']:
@@ -192,29 +198,30 @@ def create_image(filename, dimensions, offset, ppi, border_mm, segments, modules
 				width_y = mm2pix(p.params['size'][1], ppi)
 				shape = p.params['shape']
 
-				if shape == 'oval' or shape == 'circle':
+				if shape == 'oval':
+					None
+
+				if shape == 'circle':
 					x = center_x - int(round(width_x / 2.0))
-					y = center_y - int(round(width_y / 2.0))
+					y = h - (center_y + int(round(width_y / 2.0)))
 					draw.ellipse( [ x, y, x+width_x, y+width_y], fill)
 
-					# check for drill hole in pad
-					if 'drill' in p.params:
-						drill = mm2pix(p.params['drill'], ppi)
-						# draw circle for drill hole
-						x = center_x - int(round(drill / 2.0))
-						y = center_y - int(round(drill / 2.0))
-						draw.ellipse( [ x, y, x + drill, y + drill], black)
+				if shape == 'rect':
+					x = center_x - int(round(width_x / 2.0))
+					y = h -(center_y + int(round(width_y / 2.0)))
 
-	# 	elif type(p) == Rect:
-	# 		x = p.x + border_pixels
-	# 		y = p.y + border_pixels
-	# 		draw.rectangle( [x, y, x+p.width, y+p.height], fill)
+					poly = [x, y, x+width_x, y, x+width_x, y+width_y, x, y+width_y]
+					draw.polygon( poly, white, None)
+#					draw.ellipse( [ x, y, x+width_x, y+width_y], fill)
 
-	for z in zones:
-		if z.params['layer'] == layer:
-			for p in z.params['polygons']:
-				poly = list(map(lambda f: tuple(( mm2pix(f[0], ppi) - off_x, mm2pix(f[1], ppi) - off_y )), p ))
-				draw.polygon( poly, white, None)
+				# check for drill hole in pad
+				if 'drill' in p.params:
+					drill = mm2pix(p.params['drill'], ppi)
+					# draw circle for drill hole
+					x = center_x - int(round(drill / 2.0))
+					y = h - (center_y + int(round(drill / 2.0)))
+					draw.ellipse( [ x, y, x + drill, y + drill], black)
+
 
 	for v in vias:
 		if layer in v.params['layers']:
@@ -224,7 +231,7 @@ def create_image(filename, dimensions, offset, ppi, border_mm, segments, modules
 			width = mm2pix( v.params['size'], ppi) # vias are always round?
 
 			x = center_x - int(round(width / 2.0))
-			y = center_y - int(round(width / 2.0))
+			y = h - (center_y + int(round(width / 2.0)))
 			draw.ellipse( [ x, y, x+width, y+width], fill)
 
 			# check for drill hole in pad
@@ -232,8 +239,105 @@ def create_image(filename, dimensions, offset, ppi, border_mm, segments, modules
 				drill = mm2pix(v.params['drill'], ppi)
 				# draw circle for drill hole
 				x = center_x - int(round(drill / 2.0))
-				y = center_y - int(round(drill / 2.0))
+				y = h - (center_y + int(round(drill / 2.0)))
 				draw.ellipse( [ x, y, x + drill, y + drill], black)
+
+	del draw
+
+	print(' OK')
+	print('Writing', filename, '...', end="", flush=True)
+	im.save(filename, "PNG", dpi=(ppi,ppi))
+	print(' OK')
+
+
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+
+# def distance(x1, y1, x2, y2):
+# 	return mat.sqrt(math.pow(math.abs(x2-x1),2) + math.pow(math.abs(y2-y1),2))
+
+
+def create_outline_image(filename, dimensions, offset, ppi, border_mm, outlines, modules, vias):
+	print('Generating image...', end="", flush=True)
+
+	border = mm2pix(border_mm, ppi)       
+	w = dimensions[0] + 2 * border
+	h = dimensions[1] + 2 * border
+	im = Image.new("RGB", (w,h))
+	draw = ImageDraw.Draw(im)
+	black = 0x000000
+	white = 0xFFFFFF
+	fill = white
+
+	off_x = offset[0] - border
+	off_y = offset[1] - border
+
+	# create a continuous polygon from the separate outlines
+	poly = list()
+	poly.append(outlines[0].params['start'])
+	poly.append(outlines[0].params['end'])
+	del outlines[0]
+
+	while len(outlines) > 0:
+		i = 0
+		while i < len(outlines):
+			s = outlines[i].params['start']
+			e = outlines[i].params['end']
+
+			if s == poly[len(poly)-1]: # start matches
+				poly.append(e)
+				break
+			elif e == poly[len(poly)-1]: # end matches
+				poly.append(s)
+				break	
+			i = i + 1
+		del outlines[i]	
+	del poly[len(poly)-1]	
+
+	poly_pix = list()
+	for p in poly:
+	  	x = mm2pix(p[0], ppi) - off_x
+	  	y = mm2pix(p[1], ppi) - off_y
+	  	poly_pix.append( tuple(( x, h-y )) )
+	
+	draw.polygon( poly_pix, white, None)
+
+
+	for m in modules:
+		for p in m.params['pads']:
+			# no need to check for layer, only check for drill hole
+			try:
+				rotation = 360 - p.params['at'][2]
+			except:
+				rotation = 0	
+
+			angle = math.radians(rotation)	
+			rot_x = p.params['at'][0] * math.cos(angle) - p.params['at'][1] * math.sin(angle)
+			rot_y = p.params['at'][0] * math.sin(angle) + p.params['at'][1] * math.cos(angle)
+
+			center_x = mm2pix( rot_x + p.params['offset'][0], ppi) - off_x
+			center_y = mm2pix( rot_y + p.params['offset'][1], ppi) - off_y
+
+			# check for drill hole in pad
+			if 'drill' in p.params:
+				drill = mm2pix(p.params['drill'], ppi)
+				# draw circle for drill hole
+				x = center_x - int(round(drill / 2.0))
+				y = h - (center_y + int(round(drill / 2.0)))
+				draw.ellipse( [ x, y, x + drill, y + drill], black)
+
+
+	for v in vias:
+		center_x = mm2pix( v.params['at'][0], ppi) - off_x
+		center_y = mm2pix( v.params['at'][1], ppi) - off_y	
+
+		# check for drill hole in pad
+		if 'drill' in v.params:
+			drill = mm2pix(v.params['drill'], ppi)
+			# draw circle for drill hole
+			x = center_x - int(round(drill / 2.0))
+			y = h - (center_y + int(round(drill / 2.0)))
+			draw.ellipse( [ x, y, x + drill, y + drill], black)
 
 	del draw
 
@@ -336,7 +440,7 @@ pcb_data['gr_line'] = OUTLINES
 pcb_data['gr_arc'] = OUTLINES
 
 
-print("\npcb2png.py ver. 18 dec 2015\n")
+print("\nkicad_pcb2png.py ver. 2 may 2016\n")
 
 current_dir = os.getcwd()
 if len(sys.argv) > 1:
@@ -349,6 +453,7 @@ if len(sys.argv) > 1:
 		exit()
 else:
 	print("ERR: Project name missing!")
+	print("Usage: python3 kicad_pcb2png.py [project name]")
 	exit()	
 
 
@@ -372,17 +477,15 @@ print(' OK\n')
 # filter out all outlines that are not on the Edge.Cuts layer
 OUTLINES = list(filter(lambda f: f.params['layer'] == 'Edge.Cuts', OUTLINES))
 
+print('outlines:',len(OUTLINES))
+print('zones:',len(ZONES))
 print('segments:',len(SEGMENTS))
-print('vias:',len(VIAS))
 print('modules:',len(MODULES))
-
 pad_count = 0
 for m in MODULES:
 	pad_count += len(m.params['pads'])
 print('pads:',pad_count)
-
-print('outlines:',len(OUTLINES))
-print('zones:',len(ZONES))
+print('vias:',len(VIAS))
 
 if len(OUTLINES) < 3:
 	print("ERR: Less than 3 board outlines found!")
@@ -397,10 +500,14 @@ try:
 
 	print('\nBoard: {:.2f} x {:.2f} mm'.format(width, height))
 	print('Border: {:.2f} mm'.format(BORDER_MM))
-	print('Image:', dimensions[0], 'x', dimensions[1], '@', PPI, 'ppi\n')
+	border_pixels = int(round(BORDER_MM/25.4*PPI))
+	print('Image:', dimensions[0]+border_pixels*2, 'x', dimensions[1]+border_pixels*2, '@', PPI, 'ppi\n')
 except:
 	print("ERR: No board outlines found!")
 	exit()
 
 create_image(project_name+"-B.Cu_MILL-TRACES.png", dimensions, offset, PPI, BORDER_MM, SEGMENTS, MODULES, ZONES, VIAS)
+
+create_outline_image(project_name+"-MILL-OUTLINE.png", dimensions, offset, PPI, BORDER_MM, OUTLINES, MODULES, VIAS)
+
 print("Done\n")
